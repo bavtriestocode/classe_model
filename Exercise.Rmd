@@ -1,0 +1,140 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+
+# Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this report, we will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The 5 possible methods are -
+
+A exactly according to the specification
+B throwing the elbows to the front
+C lifting the dumbbell only halfway
+D lowering the dumbbell only halfway
+E throwing the hips to the front
+
+# Data Preprocessing
+## Loading Required Libraries
+```{r libraries, warning=FALSE, message=FALSE}
+library(caret)
+library(rattle)
+```
+
+## Download Data
+```{r data_dl, cache = TRUE}
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./pml-training.csv"
+testFile  <- "./pml-testing.csv"
+
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile=trainFile)
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile=testFile)
+}
+```
+
+## Read the Data
+After downloading the data from the data source, we can read the two csv files into two data frames.
+
+```{r data_read, cache=TRUE}
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+str(training)
+dim(training)
+```
+
+The training data set is made of 19622 observations on 160 columns. We can notice that many columns have NA values or blank values on almost every observation. So we will remove them, because they will not produce any information. The first seven columns give information about the people who did the test, and also timestamps. We will not take them in our model.
+
+## Clean the data
+```{r data_clean, cache=TRUE}
+# Here we get the indexes of the columns having at least 80% of NA or blank values on the training dataset
+training_clean <- training[,-c(1:7)]
+indColToRemove <- which(colSums(is.na(training_clean)|training_clean=="")>0.8*dim(training_clean)[1]) 
+training_clean <- training_clean[,-indColToRemove]
+dim(training_clean)
+
+# Cleaning the test data as well
+testing_clean <- testing[,-c(1:7)]
+testing_clean <- testing_clean[,-indColToRemove]
+```
+
+With the cleaning process above, the number of variables for the analysis has been reduced to 53.
+
+## Slice the data
+Then, we can split the cleaned training set into a pure training data set (70%) and a validation data set (30%). We will use the validation data set to conduct cross validation in future steps.
+
+```{r data_slice}
+set.seed(1) # For reproducible purpose
+inTrain <- createDataPartition(training_clean$classe, p=0.70, list=F)
+train_Data <- training_clean[inTrain, ]
+valid_Data <- training_clean[-inTrain, ]
+```
+
+# Data Modeling
+## Remove zero covariates
+Let's see if there are any variable that have little variance so that we can remove them.
+
+```{r nzv}
+nzv<-nearZeroVar(train_Data,saveMetrics = TRUE)
+nzv
+```
+Since there are no variables with zero variance, we can continue using the same dataset.
+
+Three methods will be applied to model the regressions (in the Train dataset) and the best one (with higher accuracy when applied to the Test dataset) will be used for the quiz predictions. The methods are: Random Forests, Decision Tree and Generalized Boosted Model, as described below. In order to limit the effects of overfitting, and improve the efficicency of the models, we will use the *cross-validation technique. We will use 5 folds (usually, 5 or 10 can be used, but 10 folds gives higher run times with no significant increase of the accuracy).
+
+## Trees
+```{r tree, cache = TRUE}
+trControl <- trainControl(method="cv", number=5)
+set.seed(2)
+mod_tree<-train(classe~.,data=train_Data,trControl=trControl,method="rpart")
+fancyRpartPlot(mod_tree$finalModel)
+pred_tree<-predict(mod_tree,valid_Data)
+acc_tree<-confusionMatrix(pred_tree,as.factor(valid_Data$classe))$overall[1]
+```
+
+## Random Forests
+```{r rf, cache= TRUE}
+set.seed(3)
+mod_RF<-train(classe~.,data=train_Data,trControl=trControl,method="rf", ntree=100)
+plot(mod_RF,main="Accuracy of Random forest model by number of predictors")
+pred_RF<-predict(mod_RF,valid_Data)
+acc_RF<-confusionMatrix(pred_RF,as.factor(valid_Data$classe))$overall[1]
+plot(mod_RF$finalModel,main="Model error of Random forest model by number of trees")
+```
+
+## Boosting
+```{r boosting, cache= TRUE}
+set.seed(4)
+mod_gbm<-train(classe~.,data=train_Data,trControl=trControl,method="gbm", verbose=FALSE)
+plot(mod_gbm)
+pred_gbm<-predict(mod_gbm,valid_Data)
+acc_gbm<-confusionMatrix(pred_gbm,as.factor(valid_Data$classe))$overall[1]
+```
+
+## Analysing accuracy
+```{r accuracy}
+AccuracyResults <- data.frame(
+  Model = c('CART', 'GBM', 'RF'),
+  Accuracy = rbind(acc_tree, acc_gbm, acc_RF)
+)
+print(AccuracyResults)
+```
+
+# Conclusion
+Since the random forest model has the highest accuracy, we will then use it to predict the values of classe for the test data set.
+
+```{r final}
+FinalTestPred <- predict(mod_RF,newdata=testing_clean)
+FinalTestPred
+```
+
+## References
+The data used a courtesy of:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises][1]. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13). Stuttgart, Germany: ACM SIGCHI, 2013.
+
+[1]: http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201 "Qualitative Activity Recognition of Weight Lifting Exercises."
